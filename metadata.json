@@ -1,0 +1,6 @@
+{
+  "name": "SISTEM MONITORING HAFALAN AL-QUR'AN SDQU AL I'TISHAM",
+  "description": "Sistem digital mobile-first monitoring hafalan dan murojaah Al-Qur'an santri SDQU Al I'tisham dengan integrasi Google Apps Script dan Spreadsheet.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
