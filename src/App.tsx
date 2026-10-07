@@ -78,8 +78,12 @@ export default function App() {
     setCurrentUser(user);
   };
 
-  const handleLogout = () => {
-    storage.setSession(null);
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch {
+      // Ignored
+    }
     setCurrentUser(null);
     setData(null);
   };

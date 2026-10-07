@@ -18,11 +18,24 @@ const KEYS = {
   TARGET: 'sdqu_target',
   PENGUMUMAN: 'sdqu_pengumuman',
   SESSION: 'sdqu_session',
+  TOKEN: 'sdqu_token',
   GAS_URL: 'sdqu_gas_url',
   USE_LIVE_GAS: 'sdqu_use_live_gas',
 };
 
 export const storage = {
+  getToken(): string {
+    return localStorage.getItem(KEYS.TOKEN) || '';
+  },
+
+  setToken(token: string | null) {
+    if (token) {
+      localStorage.setItem(KEYS.TOKEN, token);
+    } else {
+      localStorage.removeItem(KEYS.TOKEN);
+    }
+  },
+
   getUsers(): User[] {
     const raw = localStorage.getItem(KEYS.USERS);
     if (!raw) {
@@ -121,6 +134,10 @@ export const storage = {
     }
   },
 
+  setTarget(targets: TargetTahfidz[]) {
+    localStorage.setItem(KEYS.TARGET, JSON.stringify(targets));
+  },
+
   getPengumuman(): Pengumuman[] {
     const raw = localStorage.getItem(KEYS.PENGUMUMAN);
     if (!raw) {
@@ -151,8 +168,12 @@ export const storage = {
   setSession(user: User | null) {
     if (user) {
       localStorage.setItem(KEYS.SESSION, JSON.stringify(user));
+      if (user.Token) {
+        localStorage.setItem(KEYS.TOKEN, user.Token);
+      }
     } else {
       localStorage.removeItem(KEYS.SESSION);
+      localStorage.removeItem(KEYS.TOKEN);
     }
   },
 

@@ -10,6 +10,7 @@ export interface User {
   ChildID?: string; // S001, S002, etc. (for wali)
   NoHP: string;
   Status: 'Aktif' | 'Nonaktif';
+  Token?: string; // Session token from backend
 }
 
 export interface Siswa {

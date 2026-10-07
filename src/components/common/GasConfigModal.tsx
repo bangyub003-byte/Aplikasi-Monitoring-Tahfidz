@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, Copy, Check, ExternalLink, RefreshCw, Database, Server, Info, ShieldCheck } from 'lucide-react';
+import { X, Copy, Check, ExternalLink, RefreshCw, Database, Server, Info, ShieldCheck, CheckCircle2, AlertTriangle, Play } from 'lucide-react';
 import { storage } from '../../services/storage';
-import { api } from '../../services/api';
+import { apiService, ConnectionTestResult } from '../../services/apiService';
 import { GOOGLE_APPS_SCRIPT_CODE } from '../../services/gasCode';
 
 interface GasConfigModalProps {
@@ -16,10 +16,11 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
   onConfigUpdated,
 }) => {
   const [gasUrl, setGasUrl] = useState(storage.getGasUrl());
-  const [useLiveGas, setUseLiveGas] = useState(storage.isUseLiveGas());
   const [copied, setCopied] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [seeding, setSeeding] = useState(false);
+  const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
+  const [seedResult, setSeedResult] = useState<{ success: boolean; message: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'status' | 'code' | 'schema'>('status');
 
   if (!isOpen) return null;
@@ -36,26 +37,27 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
 
   const handleSaveConfig = () => {
     storage.setGasUrl(gasUrl.trim());
-    storage.setUseLiveGas(useLiveGas);
+    storage.setUseLiveGas(Boolean(gasUrl.trim()));
     onConfigUpdated();
-    onClose();
   };
 
+  // TUGAS AUDIT 5: Test Database Connection
   const handleTestConnection = async () => {
     setTesting(true);
     setTestResult(null);
+    setSeedResult(null);
+
+    // Pastikan URL tersimpan dulu
+    storage.setGasUrl(gasUrl.trim());
+    storage.setUseLiveGas(Boolean(gasUrl.trim()));
+
     try {
-      // Temporarily store to test
-      storage.setGasUrl(gasUrl.trim());
-      storage.setUseLiveGas(useLiveGas);
-      const res = await api.ping();
-      setTestResult({
-        success: res.success,
-        message: res.message + (res.latency ? ` (${res.latency}ms)` : ''),
-      });
+      const res = await apiService.testConnection();
+      setTestResult(res);
+      onConfigUpdated();
     } catch (err) {
       setTestResult({
-        success: false,
+        status: 'error',
         message: 'Koneksi gagal: ' + (err as Error).message,
       });
     } finally {
@@ -63,17 +65,45 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
     }
   };
 
-  const handleResetData = () => {
-    if (window.confirm('Kembalikan data ke awal (default demo)? Semua setoran baru di database lokal akan di-reset.')) {
+  // TUGAS AUDIT 6: Seed Database to Google Sheet
+  const handleSeedToSheet = async () => {
+    if (!gasUrl.trim()) {
+      alert('Masukkan dan simpan URL Google Apps Script terlebih dahulu!');
+      return;
+    }
+
+    if (window.confirm('Kirim data awal (User, Santri, Kelas, Pengumuman) langsung ke Google Spreadsheet Anda? Data sheet kosong akan terisi otomatis.')) {
+      setSeeding(true);
+      setSeedResult(null);
+      try {
+        const res = await apiService.seedInitialDataToSheet();
+        setSeedResult({
+          success: res.success,
+          message: res.message || 'Selesai sinkronisasi',
+        });
+        onConfigUpdated();
+      } catch (err) {
+        setSeedResult({
+          success: false,
+          message: 'Gagal seeding: ' + (err as Error).message,
+        });
+      } finally {
+        setSeeding(false);
+      }
+    }
+  };
+
+  const handleResetLocal = () => {
+    if (window.confirm('Reset data lokal offline ke bawaan awal?')) {
       storage.resetToDefault();
       onConfigUpdated();
-      setTestResult({ success: true, message: 'Database lokal berhasil di-reset ke data bawaan sekolah.' });
+      alert('Data lokal berhasil di-reset.');
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-xs transition-opacity animate-fade-in">
-      <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-stone-200">
+      <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden border border-stone-200">
         {/* Header */}
         <div className="bg-emerald-900 text-white px-5 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -82,7 +112,7 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
             </div>
             <div>
               <h2 className="text-sm font-bold">Koneksi Database & Google Sheet</h2>
-              <p className="text-[11px] text-emerald-200">SDQU Al I'tisham Tahfidz API</p>
+              <p className="text-[11px] text-emerald-200">SDQU Al I'tisham · Single Source of Truth</p>
             </div>
           </div>
           <button
@@ -104,7 +134,7 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
                 : 'border-transparent text-stone-500 hover:text-stone-800'
             }`}
           >
-            Pengaturan & URL
+            Koneksi & Tes Realtime
           </button>
           <button
             onClick={() => setActiveTab('code')}
@@ -114,7 +144,7 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
                 : 'border-transparent text-stone-500 hover:text-stone-800'
             }`}
           >
-            Salin Kode Apps Script
+            Salin Kode Code.gs
           </button>
           <button
             onClick={() => setActiveTab('schema')}
@@ -132,98 +162,138 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
         <div className="p-5 overflow-y-auto space-y-4 flex-1 text-xs text-stone-700">
           {activeTab === 'status' && (
             <>
-              {/* Info banner */}
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-emerald-900 space-y-1">
-                <div className="flex items-center gap-1.5 font-semibold text-emerald-800 text-[12px]">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  Keamanan Backend Otomatis Aktif
+              {/* URL Input Box */}
+              <div className="border border-stone-200 rounded-2xl p-4 space-y-3 bg-stone-50/70">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-stone-800 block text-xs">
+                    Google Apps Script Web App URL
+                  </label>
+                  <span className="text-[10px] text-emerald-700 font-semibold">
+                    {gasUrl ? 'URL Terpasang' : 'Belum Diisi'}
+                  </span>
                 </div>
-                <p className="text-[11px] leading-relaxed">
-                  Sistem telah dilengkapi isolasi data tingkat backend: Ustadz hanya dapat melihat santri binaan halaqahnya, Wali santri hanya dapat melihat 1 anaknya sendiri, dan pengumuman halaqah terisolasi sesuai pengampu.
+
+                <input
+                  type="url"
+                  value={gasUrl}
+                  onChange={(e) => setGasUrl(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                  className="w-full text-xs px-3 py-2.5 bg-white border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-600 font-mono"
+                />
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[10px] text-stone-500">
+                    Deployment type: <strong>Web App</strong> (Access: <strong>Anyone</strong>)
+                  </span>
+                  <button
+                    onClick={handleSaveConfig}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs flex items-center gap-1 shadow-xs"
+                  >
+                    <Check className="w-3.5 h-3.5" /> Simpan URL
+                  </button>
+                </div>
+              </div>
+
+              {/* TUGAS AUDIT 5: TEST DATABASE CONNECTION BUTTON */}
+              <div className="space-y-2">
+                <button
+                  onClick={handleTestConnection}
+                  disabled={testing}
+                  className="w-full py-3 px-4 rounded-xl bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw className={`w-4 h-4 ${testing ? 'animate-spin' : ''}`} />
+                  {testing ? 'Menguji Koneksi ke Code.gs...' : 'Test Database Connection'}
+                </button>
+                <p className="text-[10px] text-stone-400 text-center">
+                  Mengirim action=test ke Google Apps Script dan memverifikasi akses spreadsheet.
                 </p>
               </div>
 
-              {/* Mode Selector */}
-              <div className="border border-stone-200 rounded-xl p-3 space-y-3 bg-white">
+              {/* HASIL TEST KONEKSI */}
+              {testResult && (
+                <div
+                  className={`p-4 rounded-2xl border text-xs space-y-2 animate-fade-in ${
+                    testResult.status === 'success'
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                      : 'bg-rose-50 border-rose-300 text-rose-900'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-bold text-sm">
+                      {testResult.status === 'success' ? (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+                      )}
+                      <span>
+                        {testResult.status === 'success' ? 'Database Connected!' : 'Koneksi Gagal'}
+                      </span>
+                    </div>
+                    {testResult.latency && (
+                      <span className="text-[10px] font-mono bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-bold">
+                        {testResult.latency}ms
+                      </span>
+                    )}
+                  </div>
+
+                  {testResult.status === 'success' ? (
+                    <div className="bg-white/80 p-2.5 rounded-xl border border-emerald-200 space-y-1 font-mono text-[11px]">
+                      <div><strong>status:</strong> "{testResult.status}"</div>
+                      <div><strong>message:</strong> "{testResult.message}"</div>
+                      <div><strong>sheet:</strong> "{testResult.sheet}"</div>
+                      <div><strong>timestamp:</strong> "{testResult.timestamp}"</div>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] leading-relaxed bg-white/80 p-2.5 rounded-xl border border-rose-200">
+                      <p className="font-semibold text-rose-800">Detail Kesalahan:</p>
+                      <p className="mt-0.5">{testResult.message}</p>
+                      <p className="mt-1.5 text-[10px] text-stone-500">
+                        Pastikan Anda telah melakukan <strong>Deploy &gt; New deployment &gt; Web app</strong> dengan setting: <strong>Who has access: Anyone</strong>.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* SEED DATA KE GOOGLE SHEET */}
+              <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-3.5 space-y-2">
                 <div className="flex items-center justify-between">
                   <div>
-                    <label className="font-semibold text-stone-800 block text-xs">
-                      Gunakan Google Spreadsheet Live
-                    </label>
-                    <span className="text-[11px] text-stone-500">
-                      Sambungkan langsung ke Google Sheet via Google Apps Script Web App
-                    </span>
+                    <h4 className="font-bold text-amber-950 text-xs">
+                      Isi Data Awal ke Google Sheet
+                    </h4>
+                    <p className="text-[10px] text-stone-600">
+                      Mengisi sheet TB_User, TB_Siswa, TB_Kelas yang masih kosong di Spreadsheet Anda.
+                    </p>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={useLiveGas}
-                    onChange={(e) => setUseLiveGas(e.target.checked)}
-                    className="w-5 h-5 accent-emerald-600 rounded cursor-pointer"
-                  />
+                  <button
+                    onClick={handleSeedToSheet}
+                    disabled={seeding || !gasUrl}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <Play className="w-3 h-3 fill-current" />
+                    {seeding ? 'Mengisi...' : 'Kirim Data Awal'}
+                  </button>
                 </div>
 
-                {useLiveGas && (
-                  <div className="space-y-1.5 pt-2 border-t border-stone-100">
-                    <label className="text-[11px] font-medium text-stone-700 block">
-                      Google Apps Script Web App URL
-                    </label>
-                    <input
-                      type="url"
-                      value={gasUrl}
-                      onChange={(e) => setGasUrl(e.target.value)}
-                      placeholder="https://script.google.com/macros/s/AKfycb.../exec"
-                      className="w-full text-xs px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                    <p className="text-[10px] text-stone-400">
-                      Dapatkan URL ini setelah menerapkan (deploy) sebagai Web App di Google Apps Script Spreadsheet Anda.
-                    </p>
+                {seedResult && (
+                  <div className={`p-2 rounded-lg text-[11px] font-medium ${seedResult.success ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                    {seedResult.message}
                   </div>
                 )}
               </div>
 
-              {/* Action buttons */}
-              <div className="flex flex-col sm:flex-row gap-2 pt-1">
-                <button
-                  onClick={handleTestConnection}
-                  disabled={testing}
-                  className="flex-1 py-2.5 px-3 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-800 font-medium flex items-center justify-center gap-1.5 transition-colors border border-stone-300 disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
-                  {testing ? 'Menguji Koneksi...' : 'Uji Koneksi (Test Ping)'}
-                </button>
-                <button
-                  onClick={handleSaveConfig}
-                  className="flex-1 py-2.5 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-medium flex items-center justify-center gap-1.5 transition-colors shadow-sm"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  Simpan Konfigurasi
-                </button>
-              </div>
-
-              {testResult && (
-                <div
-                  className={`p-3 rounded-lg border text-xs ${
-                    testResult.success
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                      : 'bg-rose-50 border-rose-200 text-rose-800'
-                  }`}
-                >
-                  <p className="font-semibold">{testResult.success ? '✓ Berhasil' : '⚠ Perhatian'}</p>
-                  <p className="text-[11px] mt-0.5">{testResult.message}</p>
-                </div>
-              )}
-
               {/* Reset database section */}
-              <div className="pt-3 border-t border-stone-200 flex items-center justify-between">
+              <div className="pt-2 border-t border-stone-200 flex items-center justify-between">
                 <div>
-                  <div className="font-semibold text-stone-800 text-xs">Reset Database Lokal</div>
-                  <div className="text-[10px] text-stone-500">Muat ulang data demo santri & ustadz bawaan</div>
+                  <div className="font-semibold text-stone-800 text-xs">Reset Database Lokal (Offline)</div>
+                  <div className="text-[10px] text-stone-500">Hanya berpengaruh saat offline</div>
                 </div>
                 <button
-                  onClick={handleResetData}
+                  onClick={handleResetLocal}
                   className="text-xs text-rose-600 hover:text-rose-700 font-medium px-2.5 py-1.5 rounded-lg border border-rose-200 hover:bg-rose-50 transition-colors"
                 >
-                  Reset Data Demo
+                  Reset Lokal
                 </button>
               </div>
             </>
@@ -240,7 +310,7 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
                   className="flex items-center gap-1 text-xs px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-medium transition-colors shadow-xs"
                 >
                   {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copied ? 'Tersalin ke Clipboard!' : 'Salin Kode'}
+                  {copied ? 'Tersalin ke Clipboard!' : 'Salin Seluruh Kode'}
                 </button>
               </div>
 
@@ -250,13 +320,14 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
 
               <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-amber-900 text-[11px] space-y-1">
                 <div className="font-semibold text-amber-800 flex items-center gap-1">
-                  <Info className="w-3.5 h-3.5" /> Panduan Singkat 4 Langkah:
+                  <Info className="w-3.5 h-3.5" /> Langkah Memasang:
                 </div>
                 <ol className="list-decimal pl-4 space-y-0.5 text-stone-700 text-[11px]">
-                  <li>Buka Spreadsheet Google Drive baru &gt; Menu <strong>Ekstensi</strong> &gt; <strong>Apps Script</strong>.</li>
-                  <li>Paste kode di atas &gt; Klik Simpan &gt; Jalankan fungsi <strong>initDatabase()</strong> sekali untuk otomatis generate sheet.</li>
+                  <li>Buka Spreadsheet Google Drive Anda &gt; Menu <strong>Ekstensi</strong> &gt; <strong>Apps Script</strong>.</li>
+                  <li>Paste seluruh kode di atas &gt; Klik Simpan.</li>
+                  <li>Pilih fungsi <strong>initDatabase</strong> pada menu drop-down di atas lalu klik <strong>Run</strong> (Jalankan).</li>
                   <li>Klik tombol <strong>Deploy &gt; New Deployment &gt; Web App</strong>.</li>
-                  <li>Set <strong>Execute as: Me</strong> dan <strong>Who has access: Anyone</strong>. Salin Web app URL ke aplikasi ini!</li>
+                  <li>Pastikan <strong>Who has access: Anyone</strong> lalu klik Deploy dan salin Web App URL ke aplikasi!</li>
                 </ol>
               </div>
             </div>
@@ -265,21 +336,24 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
           {activeTab === 'schema' && (
             <div className="space-y-3">
               <p className="text-[11px] text-stone-600">
-                Struktur sheet dan kolom sesuai standar sistem monitoring tahfidz SDQU Al I'tisham:
+                Struktur tabel di Google Spreadsheet:
               </p>
               <div className="space-y-2">
                 {[
-                  { name: 'TB_User', cols: 'ID, Nama, Username, Password, Role, GuruID, ChildID, NoHP, Status' },
-                  { name: 'TB_Siswa', cols: 'ID, NISN, Nama Siswa, Jenis Kelamin, KelasID, Nama Orang Tua, No HP Orang Tua, Target Juz, Status, Catatan, GuruID' },
-                  { name: 'TB_Kelas', cols: 'ID, Nama Kelas, Tingkat, Wali Kelas, Target Juz, Tahun Ajaran' },
-                  { name: 'TB_Setoran', cols: 'ID, SiswaID, Tanggal, Jenis Setoran, Surat, Ayat Awal, Ayat Akhir, Juz, Kelancaran, Tajwid, Makhraj, Predikat, GuruID' },
-                  { name: 'TB_Catatan', cols: 'ID, SiswaID, Tanggal, Kategori, Catatan, GuruID' },
-                  { name: 'TB_Target', cols: 'ID, Kelas, Semester, Target Juz, Target Surat' },
-                  { name: 'TB_Pengumuman', cols: 'ID, GuruID, Judul, Isi, Tanggal' },
+                  { name: 'TB_User', cols: 'ID, Nama, Username, Password, Role, GuruID, ChildID, NoHP, Status', desc: 'Menyimpan akun login seluruh role' },
+                  { name: 'TB_Siswa', cols: 'ID, NISN, Nama Siswa, Jenis Kelamin, KelasID, Nama Orang Tua, No HP Orang Tua, Target Juz, Status, Catatan, GuruID', desc: 'Menyimpan profil santri & relasi GuruID' },
+                  { name: 'TB_Kelas', cols: 'ID, Nama Kelas, Tingkat, Wali Kelas, Target Juz, Tahun Ajaran', desc: 'Rombongan belajar & target tahunan' },
+                  { name: 'TB_Setoran', cols: 'ID, SiswaID, Tanggal, Jenis Setoran, Surat, Ayat Awal, Ayat Akhir, Juz, Kelancaran, Tajwid, Makhraj, Predikat, Catatan, GuruID', desc: 'Riwayat hafalan sabaq & murojaah' },
+                  { name: 'TB_Catatan', cols: 'ID, SiswaID, Tanggal, Kategori, Catatan, GuruID', desc: 'Catatan perkembangan & adab santri' },
+                  { name: 'TB_Target', cols: 'ID, Kelas, Semester, Target Juz, Target Surat', desc: 'Standar target kurikulum tahfidz' },
+                  { name: 'TB_Pengumuman', cols: 'ID, GuruID, Judul, Isi, Tanggal', desc: 'Pesan siaran ustadz ke wali halaqah' },
                 ].map((tbl) => (
-                  <div key={tbl.name} className="border border-stone-200 rounded-lg p-2.5 bg-stone-50">
-                    <div className="font-semibold text-emerald-800 text-xs">{tbl.name}</div>
-                    <div className="text-[10px] text-stone-600 font-mono mt-0.5 break-words">
+                  <div key={tbl.name} className="border border-stone-200 rounded-xl p-2.5 bg-stone-50">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-emerald-800 text-xs">{tbl.name}</span>
+                      <span className="text-[10px] text-stone-400">{tbl.desc}</span>
+                    </div>
+                    <div className="text-[10px] text-stone-600 font-mono mt-1 break-words">
                       {tbl.cols}
                     </div>
                   </div>
@@ -293,7 +367,7 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
         <div className="bg-stone-50 border-t border-stone-200 px-5 py-3 flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-xs font-semibold text-stone-700 bg-white hover:bg-stone-100 border border-stone-300 rounded-lg transition-colors"
+            className="px-4 py-2 text-xs font-semibold text-stone-700 bg-white hover:bg-stone-100 border border-stone-300 rounded-lg transition-colors cursor-pointer"
           >
             Tutup
           </button>
@@ -302,3 +376,4 @@ export const GasConfigModal: React.FC<GasConfigModalProps> = ({
     </div>
   );
 };
+
